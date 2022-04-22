@@ -1,4 +1,3 @@
-
 """module holding Equipment class and subclasses of Equipment."""
 
 # external

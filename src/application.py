@@ -1,14 +1,19 @@
+"""module holding Application class. This class holds application layer code,
+meaning it interacts with the domain objects in a very high level fashion to achieve
+use cases for the application (e.g. reserve, cancel, view reservations)"""
+
+# external
 from __future__ import annotations
-from typing import Union, Hashable
 from datetime import datetime, date, timedelta
 
+# local
 from reservation import Reservation
 from equipment import Equipment
 from transaction import Transaction
 from repository import ObjRepo
 from workshop import Workshop
 
-##### domain code (APP) ######
+
 
 class Application():
 
@@ -340,26 +345,24 @@ class Application():
         # attempt to book a workshop appointment
 
         # (1) find available workshops
-
         # get workshops
         objrepo = ObjRepo()
         workshop_list = objrepo.get_workshops()
 
         # for each workshop, get the reservations
-        # associated with that workshop on that day and check if
-        # none of them time conflict with the to-be-created 
-        # reservation. If none of them conflict, then that
-        # workshop is available at the reservation window.
+        # associated with that workshop on the day of.
+        # look for a workshop that has no conflicting reservations
+        # with the time window for which we want to book a reservation
         found_workshop = False
         for workshop in workshop_list:
             workshop_id = workshop.shop_id
+            
+            # fetch all reservations for this workshop id on the day of this reservation
             day_of = reservation_start_datetime.date()
             start_of_day_time = datetime.strptime('00:00', '%H:%M').time()
             end_of_day_time = datetime.strptime('23:59', '%H:%M').time()
             start_of_day = datetime.combine(day_of, start_of_day_time)
             end_of_day = datetime.combine(day_of, end_of_day_time)
-
-            # fetch all reservations for this workshop id on the day of this reservation
             rsvn_ls = objrepo.get_reservations_by_wkshop_id(workshop_id,start_of_day,end_of_day)
 
             # remove reservations that do not conflict
@@ -371,7 +374,6 @@ class Application():
                 workshop_to_book = workshop
                 break
             else:
-                # print(workshop_id)
                 print("workshop already booked!: id={}".format(workshop_id))
 
         if not found_workshop:
@@ -383,11 +385,8 @@ class Application():
         print("creating reservation...")
         objrepo = ObjRepo()
         new_rsvn_id = objrepo.next_reservation_ID()
-        # today = date.today().strftime("%m/%d/%Y")
         new_rvn = Reservation(new_rsvn_id,custID,booking_date_datetime,reservation_start_datetime,workshop_to_book,duration)
-        # new_rvn.add_wrk(wkshp_b)
         print("created reservation: {}".format(new_rvn))
-
         
         # (3) calculate reservation costs, discounts, downpayment
         print("calculating total cost")
@@ -407,17 +406,13 @@ class Application():
         print('${:,.2f}'.format(dnpymt))
 
         # (4) add transactions to list of transactions for reservation 
-        # adding any new transactions to reservation
-        # for now, only downpayment, if there is one,
-        # but for reservations there is no downpayment.
+        # for now, reservations have no downpayment.
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
             tdy = booking_date_datetime.day
             new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)
-
-        # assert new_rvn.hasDwnP() == False
 
         # (5) save changes (newly created reservation)
         if save:
@@ -438,72 +433,54 @@ class Application():
         
         # (1) find available equipment
 
-        # get list of equipment that all have the specified type
+        # get list of equipment that all have the specified type (e.g. all polymer extruders)
         objrepo = ObjRepo()
         eq_ls = objrepo.get_equipment_by_type(rsvType)
 
         # for each piece of equipment, get the reservations
-        # associated with that piece of equipment at the 
-        # to-be-desired reservation time (i.e. all reservations
-        # within some time window). if reservation list empty, 
-        # we found a piece of equipment that is not booked for
-        # that period of time. Else, if we've looked at every 
-        # piece of equipment corresponding to that equipment type,
-        # then that equipment type is fully booked. 
+        # associated with that piece of equipment for the day of. 
+        
+        # Then, find all conflicting reservations: i.e. all reservations
+        # for the specific machine that conflict with the reservation we
+        # we want to make. If we find there is any reservation that 
+        # conflicts, then that machine is 'booked'
+    
+        # If we find any machine that has no conflicting reservations,
+        # then it is available for booking.
+
         # (additionally, other special considerations are made
         # for certain types of equipment. e.g. for high velocity
         # crusher, we check a larger window of time (we look at
-        # the 6 hr, 30 min block of time beginning at the desired
-        # reservation time to ensure we allow a 6 hr cooldown --
-        # since worst case scenario a client uses the machine at
-        # the last second of their 30 minute window booking, meaning
-        # we need 6 hours after the end of their reservation to
-        # recalibrate the machine)
+        # the 6 hr prior to start time and 6 hr after end time
+        # to factor in a time "buffer" for machine cooldown.
 
-        fnd_eqt = False
+        found_machine = False
         eqpmnt: Equipment
         for eqpmnt in eq_ls:
             eq_id = eqpmnt.eq_id
+
             # if handling high velocity crusher, we need to confirm there is no
             # additional high velocity crusher reservation 6 hours prior to 
-            # desired reservation time, and we need to look 6 hours and 30 minutes
-            # past desired reservation time to confirm there is not an existing
+            # desired reservation time, and we need to look 6 hours 
+            # past desired reservation end time to confirm there is not an existing
             # high velocity crusher reservation. this ensurees there is enough 
             # buffer time for recalibration.
             if rsvType.upper() == "HIVELCR":
-                # # left bounded time
-                # dt = datetime.strptime(date_rs,'%m/%d/%Y').date()
-                # time = datetime.strptime("{}:{}".format(int(hr_strt),str(mm_strt).zfill(2)),"%H:%M").time()   
-                # dt_st = datetime.combine(dt,time)
                 # decrement by 5 hours 59 minutes
                 dt_st_B = reservation_start_datetime - timedelta(hours=5,minutes=59)
-
-                # right bounded time
-                # if mm_strt == 0:
-                #     hr_end = int(hr_strt) + 6
-                #     mm_end = 30
-                # else:
-                #     hr_end = int(hr_strt) + 6 + 1
-                #     mm_end = 0
-                # time = datetime.strptime("{}:{}".format(hr_end,str(mm_end).zfill(2)),"%H:%M").time()   
-                dt_en = reservation_start_datetime
                 # increment by 6 hours + duration time
+                dt_en = reservation_start_datetime
                 dt_en_B = dt_en + timedelta(hours=6) + timedelta(hours=duration)
-                print(dt_st_B,dt_en_B)
             else:
-                # dt = datetime.strptime(date_rs,'%m/%d/%Y').date()
-                # time = datetime.strptime("{}:{}".format(hr_strt,str(mm_strt).zfill(2)),"%H:%M").time()   
                 dt_st_B = reservation_start_datetime
                 dt_en_B = reservation_end_datetime
 
-
+            # fetch all reservations for this equipment id on the day of this reservation
             day_of = reservation_start_datetime.date()
             start_of_day_time = datetime.strptime('00:00', '%H:%M').time()
             end_of_day_time = datetime.strptime('23:59', '%H:%M').time()
             start_of_day = datetime.combine(day_of, start_of_day_time)
             end_of_day = datetime.combine(day_of, end_of_day_time)
-
-            # fetch all reservations for this equipment id on the day of this reservation
             rsvn_ls = objrepo.get_reservations_by_eq_id(eq_id,start_of_day,end_of_day)
 
             # look for conflicting reservations
@@ -511,26 +488,15 @@ class Application():
 
             if len(conflicting_reservations) == 0:
                 print("{} available!: id={}".format(eqpmnt.eq_name,eq_id))
-                fnd_eqt = True
+                found_machine = True
                 equipment_to_book = eqpmnt
                 break
             else:
-                # print(wksp_id)
                 print("{} booked!: id={}".format(eqpmnt.eq_name,eq_id))
 
-        if not fnd_eqt:
+        if not found_machine:
             print("Fail. did not find available {} at this time.".format(eq_nms[rsvType.upper()]))
             return
-
-        # (2) create piece of equipment reservation
-
-        # create reservation for this time for this piece of equipment
-        # print("creating reservation...")
-        # newID = objrepo.next_reservation_ID()
-        # tdy = date.today().strftime("%m/%d/%Y")
-        # new_rvn = Resrvtn(newID,custID,tdy,date_rs,d_o_w,hr_strt,mm_strt)
-        # new_rvn.add_eqp(eqmnt_b)
-        # print("created reservation: {}".format(new_rvn))
 
         # (2) create piece of equipment reservation
         # create reservation for this time for this piece of equipment
@@ -538,9 +504,7 @@ class Application():
         print("creating reservation...")
         objrepo = ObjRepo()
         new_rsvn_id = objrepo.next_reservation_ID()
-        # today = date.today().strftime("%m/%d/%Y")
         new_rvn = Reservation(new_rsvn_id,custID,booking_date_datetime,reservation_start_datetime,equipment_to_book,duration)
-        # new_rvn.add_wrk(wkshp_b)
         print("created reservation: {}".format(new_rvn))
 
         # (3) calculate reservation costs, discounts, downpayment
@@ -561,8 +525,6 @@ class Application():
         print('${:,.2f}'.format(dnpymt))
 
         # (4) add new transactions to list of transactions for reservation
-
-        # adding any new transactions to reservation object
         # there are downpayments for equipment
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
@@ -570,8 +532,6 @@ class Application():
             new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)
-
-        # assert new_rvn.hasDwnP() == False
 
         # (5) save changes (newly created reservation)
         if save:
