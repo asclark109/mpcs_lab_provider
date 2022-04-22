@@ -409,7 +409,7 @@ class Application():
         # for now, reservations have no downpayment.
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
-            tdy = booking_date_datetime.day
+            tdy = booking_date_datetime.date()
             new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)
@@ -528,7 +528,7 @@ class Application():
         # there are downpayments for equipment
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
-            tdy = booking_date_datetime.day
+            tdy = booking_date_datetime.date()
             new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)

@@ -1,0 +1,9 @@
+1,mini microvac #1,Micrvac
+2,mini microvac #2,Micrvac
+3,irradiator #1,Irradtr
+4,irradiator #2,Irradtr
+5,polymer extruder #1,PlymExt
+6,polymer extruder #2,PlymExt
+7,polymer extruder #3,PlymExt
+8,high velocity crusher #1,HiVelCr
+9,1.21 gigawatt lightning harvester #1,LiHrvst

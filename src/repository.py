@@ -14,11 +14,13 @@ from equipment_factory import EquipmentFactory
 
 class ObjRepo():
 
+    # should change this below so it works on other operating systems besides
+    # windows. it may not work on linux because of the forward slash?
     DATA_PATH = "db/"
-    TRN_FILE = DATA_PATH + "trnsctn.txt"
-    RSV_FILE = DATA_PATH + "rsrvtns.txt"
-    WKS_FILE = DATA_PATH + "wrkshps.txt"
-    EQM_FILE = DATA_PATH + "eqmnt.txt"
+    TRN_FILE = DATA_PATH + "transactions.txt"
+    RSV_FILE = DATA_PATH + "reservations.txt"
+    WKS_FILE = DATA_PATH + "workshops.txt"
+    EQM_FILE = DATA_PATH + "equipment.txt"
 
     def __init__(self) -> None:
         pass
@@ -99,15 +101,6 @@ class ObjRepo():
                 rsvn = Reservation(rsvn_id, cust_id, date_booked, date_reserv, bookable_item, duration, canceld)
                 
                 return rsvn
-
-        #         if wksp_id != "":
-        #             wkshop = self.getWkp(wksp_id)
-        #             rsvn.add_wrk(wkshop)
-        #         elif eq_id != "":
-        #             eqpmnt = self.getEqmt(eq_id)
-        #             rsvn.add_eqp(eqpmnt)
-
-        #         return rsvn
         
         return None
 
