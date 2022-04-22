@@ -1,18 +1,16 @@
+"""module holding ObjRepo class. Responsible for creating objects from data in storage."""
+
+# external
 from __future__ import annotations
-from typing import Union, Hashable
-from datetime import datetime, date, timedelta
+from datetime import datetime
 
+# local
 from bookable_item import BookableItem
-
 from reservation import Reservation
 from equipment import Equipment
-from transaction import Trnsctn
+from transaction import Transaction
 from workshop import Workshop
-
 from equipment_factory import EquipmentFactory
-from bookable_item_factory import BookableItemFactory
-
-######### REPO #########
 
 class ObjRepo():
 
@@ -156,7 +154,7 @@ class ObjRepo():
 
         return wksp_ls
 
-    def get_transactions(self, dt_strt: str, dt_end: str) -> list[Trnsctn]:
+    def get_transactions(self, dt_strt: str, dt_end: str) -> list[Transaction]:
         with open(self.TRN_FILE) as f:
             lines = f.readlines()
 
@@ -172,7 +170,7 @@ class ObjRepo():
             billtyp = line[4]
             date = line[5]
 
-            trnsctn = Trnsctn(trns_id,resv_id,desc,date,amount,billtyp)
+            trnsctn = Transaction(trns_id,resv_id,desc,date,amount,billtyp)
             trns_ls.append(trnsctn)
 
         trns_cl = []
@@ -607,6 +605,7 @@ class ObjRepo():
 
 
 def main():
+    """use this method to play around with repository"""
     repo = ObjRepo()
     # eqpmnt_list = repo.get_equipment_by_type("Micrvac")
     # print(eqpmnt_list)

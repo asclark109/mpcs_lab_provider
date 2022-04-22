@@ -1,4 +1,8 @@
-from equipment import *
+"""module holding EquipmentFactory class. Responsible for making it easy to make subclasses of Equipemnt"""
+
+# local
+from equipment import Equipment
+from equipment import Microvac,Irradiator,PolymerExtruder,HighVelocityCrusher,LightningHarvester
 
 class EquipmentFactory():
 

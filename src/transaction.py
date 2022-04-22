@@ -1,4 +1,6 @@
-class Trnsctn():
+"""module holding Transaction class. For now it is a data object."""
+
+class Transaction():
 
     def __init__(self, trns_id:str, resv_id:str, desc:str, date: str, amnt: float, billtyp: str) -> None:
         self.trns_id = trns_id

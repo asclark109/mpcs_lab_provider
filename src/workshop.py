@@ -1,7 +1,9 @@
-from __future__ import annotations
-from typing import Union, Hashable
-from datetime import datetime, date, timedelta
+"""module holding Workshop class."""
 
+# external
+from __future__ import annotations
+
+# local
 from bookable_item import BookableItem
 
 

@@ -4,13 +4,289 @@ from datetime import datetime, date, timedelta
 
 from reservation import Reservation
 from equipment import Equipment
-from transaction import Trnsctn
+from transaction import Transaction
 from repository import ObjRepo
 from workshop import Workshop
 
 ##### domain code (APP) ######
 
-class AppInt():
+class Application():
+
+    def reserve(self,custID: str, rsvType: str, date_rs:str, hr_strt:str, mm_strt:str, duration:float, save: bool = False):
+
+        # generate datetime representations of start and end of reservation
+        datetime_str = "{} {}:{}".format(date_rs,hr_strt,mm_strt)
+        reservation_start_datetime = datetime.strptime(datetime_str,'%m/%d/%Y %H:%M')
+        reservation_end_datetime = reservation_start_datetime + timedelta(hours = duration)
+
+        # (0) determine weekday
+        d_o_w = self._datetime_to_weekday_str(reservation_start_datetime)
+
+        # (0) confirm reservation is 30 days within today
+        print("checking date window for booking reservation...")
+        now_datetime = datetime.now()
+        today_date = now_datetime.date()
+        delta = reservation_start_datetime.date() - today_date
+        if delta.days > 30:
+            print("Fail. cant reserve more than 30 days into future.")
+            return
+
+        # (0) confirm business is open
+        print("checking business hours...")
+        if not self._is_business_open_for_window(d_o_w,reservation_start_datetime, reservation_end_datetime):
+            print("Fail. business is not open at this time")
+            return
+
+        # reserve a workshop
+        if rsvType.upper() == "WRKSHOP":
+            self._reserve_workshop(custID,now_datetime,reservation_start_datetime,reservation_end_datetime,duration,save)
+
+        # reserve a piece of equipment
+        elif rsvType.upper() in ["MICRVAC", "IRRADTR", "PLYMEXT", "HIVELCR", "LIHRVST"]:
+            self._reserve_equipment(custID,now_datetime,reservation_start_datetime,reservation_end_datetime,duration,rsvType,save)
+
+        else:
+            print("Fail. Did not recognize reservation type. must be one of ['WRKSHOP','MICRVAC','IRRADTR','PLYMEXT','HIVELCR','LIHRVST']")
+            return
+
+    def cancel(self,custID: str, rsrvID: str, save: bool = True):
+        """assumes reservation is not already canceled"""
+
+        print("\ncancelling reservation id={} for customer id={}.".format(rsrvID,custID))
+
+        # fetch existing reservation
+        repo = ObjRepo()
+        rsvn = repo.get_reservation(rsrvID)
+
+        # (0) calculate refund
+        subtotal = rsvn.calc_tot_cost()
+        print("subtotal: ",subtotal)
+
+        downpayment = rsvn.calc_downpayment()
+        print("downpayment (50pcnt subtotal): ",downpayment)
+
+        refund = rsvn.calc_refund()
+        print("refund: ",refund)
+
+        # (1) cancel the reservation
+        rsvn.cancel()
+
+        # if the refund is non-zero, create a refund transaction and
+        # add it to the reservation
+        if refund != 0:
+            new_TID = repo.next_transaction_ID()
+            today = date.today()
+            trnsctn = Transaction(new_TID, rsrvID, "refund (cancellation)",today,refund,"DEBIT")
+            print("adding refund to list of transactions...")
+            rsvn.add_transaction(trnsctn)
+
+        # save reservation (write new line to text file) and 
+        # save new transaction (down payment, if present, to text file)
+        if save:
+            print("saving changes...")
+            repo.save_canceled_reservation(rsvn)        
+
+    def view_report(self,dt_strt: str, dt_end: str):
+        print("\nviewing report: reservations by date.")
+
+        # get reservations by date
+        repo = ObjRepo()
+        rvns_list = repo.get_reservations_by_date(dt_strt,dt_end)
+
+        
+        # print out results
+        headers = ["resv id","date booked", "date resrvd", "start", "end", "customer id", "equipment id","name", "workshop id", "name", "status"]
+        header_str = "   ".join(headers)
+        to_print = []
+        to_print.append(headers)
+
+        headers = ["-------","-----------", "-----------", "------","---", "-----------", "------------","----", "-----------", "----", "------"]
+        header_str = "   ".join(headers)
+        to_print.append(headers)
+        
+        for rvn in rvns_list:
+            resv_id = rvn.resv_id
+            date_bk = rvn.time_of_creation_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
+            date_rs = rvn.start_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
+            custID = rvn.custID
+            if isinstance(rvn.bookable_item,Workshop):
+                eqmntID = "-"
+                eqmntNM = "-"
+                wkshpID = rvn.bookable_item.get_id()
+                wkshpNM = rvn.bookable_item.get_name()
+            elif isinstance(rvn.bookable_item,Equipment):
+                eqmntID = rvn.bookable_item.get_id()
+                eqmntNM = rvn.bookable_item.get_name()
+                wkshpID = "-"
+                wkshpNM = "-"
+            else:
+                raise Exception("fatal error. Reservation did not have a bookable item")
+            canceld = "CANCELED" if rvn.canceld else "ACTIVE"
+
+
+            hr_strt = rvn.start_datetime.hour
+            mm_strt = rvn.start_datetime.minute
+            hr_end = rvn.end_datetime.hour
+            mm_end = rvn.end_datetime.minute
+
+            if hr_strt > 12:
+                hr_strt -= 12
+                st_ampm = " pm"
+            else:
+                st_ampm = " am"            
+
+            if hr_end > 12:
+                hr_end -= 12
+                en_ampm = " pm"
+            else:
+                en_ampm = " am"
+
+            time_st = str(hr_strt)+":"+str(mm_strt).zfill(2)+st_ampm
+            time_en = str(hr_end)+":"+str(mm_end).zfill(2)+en_ampm
+
+            values = [resv_id,date_bk, date_rs,time_st,time_en,custID,eqmntID,eqmntNM,wkshpID,wkshpNM,canceld]
+            to_print.append(values)
+
+        # calculate the character width of every str to be printed out,
+        # and calculate the minimum amount of space needed to fit all strs
+        # in each column
+        elmLens = [list(map(len,item)) for item in to_print]
+        col_wds = list(map(list, zip(*elmLens)))
+        max_c_w = [max(width) for width in col_wds]
+
+        # print out the list of lists, padding each string with the right amount of blank space
+        all_rep = ''
+        for row in to_print:
+            for idx,elem in enumerate(row):
+                all_rep += elem.ljust(max_c_w[idx] + 2)
+            all_rep += "\n"
+
+        print(all_rep)
+        
+    def view_transactions(self,dt_strt: str, dt_end: str):
+        print("\nviewing transactions: transactions by date.")
+
+        # fetch transactions
+        repo = ObjRepo()
+        trns_list = repo.get_transactions(dt_strt,dt_end)
+
+        # display results
+        headers = ["date", "transaction id","resv id", "type", "desc", "amount"]
+        header_str = "   ".join(headers)
+        to_print = []
+        to_print.append(headers)
+
+        headers = ["----", "--------------","-------", "----", "----", "------"]
+        header_str = "   ".join(headers)
+        to_print.append(headers)
+
+        trnsctn: Transaction
+        for trnsctn in trns_list:
+            date = trnsctn.date # mm/dd/yyyy as str
+            trns_id = trnsctn.trns_id
+            resv_id = trnsctn.resv_id
+            billtyp = trnsctn.billtyp
+            desc = trnsctn.desc
+            amount = trnsctn.amnt
+
+            amt_str = '${:,.2f}'.format(amount)
+            amt_str = "+"+amt_str if billtyp == "CREDIT" else "-"+amt_str
+
+            values = [date,trns_id,resv_id,billtyp,desc,amt_str]
+            to_print.append(values)
+
+        # calculate the character width of every str to be printed out,
+        # and calculate the minimum amount of space needed to fit all strs
+        # in each column
+        elmLens = [list(map(len,item)) for item in to_print]
+        col_wds = list(map(list, zip(*elmLens)))
+        max_c_w = [max(width) for width in col_wds]
+
+        # print out the list of lists, padding each string with the right amount of blank space
+        all_rep = ''
+        for row in to_print:
+            for idx,elem in enumerate(row):
+                all_rep += elem.ljust(max_c_w[idx] + 2)
+            all_rep += "\n"
+
+        print(all_rep)
+
+    def view_reservations(self,custID: str, dt_strt: str, dt_end: str):
+
+        print("\nviewing reservations: reservations by date, customer ID.")
+        
+        # fetch reservations by customer id
+        repo = ObjRepo()
+        rvns_list = repo.get_reservations_by_custID(custID,dt_strt,dt_end)
+
+        # print out results
+        headers = ["resv id","date booked", "date resrvd", "start", "end", "customer id", "equipment id","name", "workshop id", "name", "status"]
+        header_str = "   ".join(headers)
+        to_print = []
+        to_print.append(headers)
+
+        headers = ["-------","-----------", "-----------", "------","---", "-----------", "------------","----", "-----------", "----", "------"]
+        header_str = "   ".join(headers)
+        to_print.append(headers)
+        
+        for rvn in rvns_list:
+            resv_id = rvn.resv_id
+            date_bk = rvn.time_of_creation_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
+            date_rs = rvn.start_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
+            custID = rvn.custID
+            if isinstance(rvn.bookable_item,Workshop):
+                eqmntID = "-"
+                eqmntNM = "-"
+                wkshpID = rvn.bookable_item.get_id()
+                wkshpNM = rvn.bookable_item.get_name()
+            elif isinstance(rvn.bookable_item,Equipment):
+                eqmntID = rvn.bookable_item.get_id()
+                eqmntNM = rvn.bookable_item.get_name()
+                wkshpID = "-"
+                wkshpNM = "-"
+            else:
+                raise Exception("fatal error. Reservation did not have a bookable item")
+            canceld = "CANCELED" if rvn.canceld else "ACTIVE"
+
+
+            hr_strt = rvn.start_datetime.hour
+            mm_strt = rvn.start_datetime.minute
+            hr_end = rvn.end_datetime.hour
+            mm_end = rvn.end_datetime.minute
+
+            if hr_strt > 12:
+                hr_strt -= 12
+                st_ampm = " pm"
+            else:
+                st_ampm = " am"            
+
+            if hr_end > 12:
+                hr_end -= 12
+                en_ampm = " pm"
+            else:
+                en_ampm = " am"
+
+            time_st = str(hr_strt)+":"+str(mm_strt).zfill(2)+st_ampm
+            time_en = str(hr_end)+":"+str(mm_end).zfill(2)+en_ampm
+
+            values = [resv_id,date_bk, date_rs,time_st,time_en,custID,eqmntID,eqmntNM,wkshpID,wkshpNM,canceld]
+            to_print.append(values)
+
+        # calculate the character width of every str to be printed out,
+        # and calculate the minimum amount of space needed to fit all strs
+        # in each column
+        elmLens = [list(map(len,item)) for item in to_print]
+        col_wds = list(map(list, zip(*elmLens)))
+        max_c_w = [max(width) for width in col_wds]
+
+        # print out the list of lists, padding each string with the right amount of blank space
+        all_rep = ''
+        for row in to_print:
+            for idx,elem in enumerate(row):
+                all_rep += elem.ljust(max_c_w[idx] + 2)
+            all_rep += "\n"
+
+        print(all_rep)
 
     def _is_business_open_for_window(self, d_o_w: str, reservation_start: datetime, reservation_end:datetime)->bool:
         """returns true if business is open for the reservation duration"""
@@ -137,7 +413,7 @@ class AppInt():
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
             tdy = booking_date_datetime.day
-            new_trns = Trnsctn(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
+            new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)
 
@@ -291,7 +567,7 @@ class AppInt():
         new_trns_ID = objrepo.next_transaction_ID()
         if dnpymt > 0:
             tdy = booking_date_datetime.day
-            new_trns = Trnsctn(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
+            new_trns = Transaction(new_trns_ID,new_rvn.resv_id,r"50% down payment",tdy,dnpymt,"CREDIT")
             print("adding downpayment to the reservation's list of transactions...")
             new_rvn.add_transaction(new_trns)
 
@@ -301,279 +577,3 @@ class AppInt():
         if save:
             print("saving changes...")
             objrepo.save_new_reservation(new_rvn)
-
-    def reserve(self,custID: str, rsvType: str, date_rs:str, hr_strt:str, mm_strt:str, duration:float, save: bool = False):
-
-        # generate datetime representations of start and end of reservation
-        datetime_str = "{} {}:{}".format(date_rs,hr_strt,mm_strt)
-        reservation_start_datetime = datetime.strptime(datetime_str,'%m/%d/%Y %H:%M')
-        reservation_end_datetime = reservation_start_datetime + timedelta(hours = duration)
-
-        # (0) determine weekday
-        d_o_w = self._datetime_to_weekday_str(reservation_start_datetime)
-
-        # (0) confirm reservation is 30 days within today
-        print("checking date window for booking reservation...")
-        now_datetime = datetime.now()
-        today_date = now_datetime.date()
-        delta = reservation_start_datetime.date() - today_date
-        if delta.days > 30:
-            print("Fail. cant reserve more than 30 days into future.")
-            return
-
-        # (0) confirm business is open
-        print("checking business hours...")
-        if not self._is_business_open_for_window(d_o_w,reservation_start_datetime, reservation_end_datetime):
-            print("Fail. business is not open at this time")
-            return
-
-        # reserve a workshop
-        if rsvType.upper() == "WRKSHOP":
-            self._reserve_workshop(custID,now_datetime,reservation_start_datetime,reservation_end_datetime,duration,save)
-
-        # reserve a piece of equipment
-        elif rsvType.upper() in ["MICRVAC", "IRRADTR", "PLYMEXT", "HIVELCR", "LIHRVST"]:
-            self._reserve_equipment(custID,now_datetime,reservation_start_datetime,reservation_end_datetime,duration,rsvType,save)
-
-        else:
-            print("Fail. Did not recognize reservation type. must be one of ['WRKSHOP','MICRVAC','IRRADTR','PLYMEXT','HIVELCR','LIHRVST']")
-            return
-
-    def cancel(self,custID: str, rsrvID: str, save: bool = True):
-        """assumes reservation is not already canceled"""
-
-        print("\ncancelling reservation id={} for customer id={}.".format(rsrvID,custID))
-
-        # fetch existing reservation
-        repo = ObjRepo()
-        rsvn = repo.get_reservation(rsrvID)
-
-        # (0) calculate refund
-        subtotal = rsvn.calc_tot_cost()
-        print("subtotal: ",subtotal)
-
-        downpayment = rsvn.calc_downpayment()
-        print("downpayment (50pcnt subtotal): ",downpayment)
-
-        refund = rsvn.calc_refund()
-        print("refund: ",refund)
-
-        # (1) cancel the reservation
-        rsvn.cancel()
-
-        # if the refund is non-zero, create a refund transaction and
-        # add it to the reservation
-        if refund != 0:
-            new_TID = repo.next_transaction_ID()
-            today = date.today()
-            trnsctn = Trnsctn(new_TID, rsrvID, "refund (cancellation)",today,refund,"DEBIT")
-            print("adding refund to list of transactions...")
-            rsvn.add_transaction(trnsctn)
-
-        # save reservation (write new line to text file) and 
-        # save new transaction (down payment, if present, to text file)
-        if save:
-            print("saving changes...")
-            repo.save_canceled_reservation(rsvn)        
-
-    def view_report(self,dt_strt: str, dt_end: str):
-        print("\nviewing report: reservations by date.")
-
-        # get reservations by date
-        repo = ObjRepo()
-        rvns_list = repo.get_reservations_by_date(dt_strt,dt_end)
-
-        
-        # print out results
-        headers = ["resv id","date booked", "date resrvd", "start", "end", "customer id", "equipment id","name", "workshop id", "name", "status"]
-        header_str = "   ".join(headers)
-        to_print = []
-        to_print.append(headers)
-
-        headers = ["-------","-----------", "-----------", "------","---", "-----------", "------------","----", "-----------", "----", "------"]
-        header_str = "   ".join(headers)
-        to_print.append(headers)
-        
-        for rvn in rvns_list:
-            resv_id = rvn.resv_id
-            date_bk = rvn.time_of_creation_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
-            date_rs = rvn.start_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
-            custID = rvn.custID
-            if isinstance(rvn.bookable_item,Workshop):
-                eqmntID = "-"
-                eqmntNM = "-"
-                wkshpID = rvn.bookable_item.get_id()
-                wkshpNM = rvn.bookable_item.get_name()
-            elif isinstance(rvn.bookable_item,Equipment):
-                eqmntID = rvn.bookable_item.get_id()
-                eqmntNM = rvn.bookable_item.get_name()
-                wkshpID = "-"
-                wkshpNM = "-"
-            else:
-                raise Exception("fatal error. Reservation did not have a bookable item")
-            canceld = "CANCELED" if rvn.canceld else "ACTIVE"
-
-
-            hr_strt = rvn.start_datetime.hour
-            mm_strt = rvn.start_datetime.minute
-            hr_end = rvn.end_datetime.hour
-            mm_end = rvn.end_datetime.minute
-
-            if hr_strt > 12:
-                hr_strt -= 12
-                st_ampm = " pm"
-            else:
-                st_ampm = " am"            
-
-            if hr_end > 12:
-                hr_end -= 12
-                en_ampm = " pm"
-            else:
-                en_ampm = " am"
-
-            time_st = str(hr_strt)+":"+str(mm_strt).zfill(2)+st_ampm
-            time_en = str(hr_end)+":"+str(mm_end).zfill(2)+en_ampm
-
-            values = [resv_id,date_bk, date_rs,time_st,time_en,custID,eqmntID,eqmntNM,wkshpID,wkshpNM,canceld]
-            to_print.append(values)
-
-        # calculate the character width of every str to be printed out,
-        # and calculate the minimum amount of space needed to fit all strs
-        # in each column
-        elmLens = [list(map(len,item)) for item in to_print]
-        col_wds = list(map(list, zip(*elmLens)))
-        max_c_w = [max(width) for width in col_wds]
-
-        # print out the list of lists, padding each string with the right amount of blank space
-        all_rep = ''
-        for row in to_print:
-            for idx,elem in enumerate(row):
-                all_rep += elem.ljust(max_c_w[idx] + 2)
-            all_rep += "\n"
-
-        print(all_rep)
-        
-    def view_transactions(self,dt_strt: str, dt_end: str):
-        print("\nviewing transactions: transactions by date.")
-
-        # fetch transactions
-        repo = ObjRepo()
-        trns_list = repo.get_transactions(dt_strt,dt_end)
-
-        # display results
-        headers = ["date", "transaction id","resv id", "type", "desc", "amount"]
-        header_str = "   ".join(headers)
-        to_print = []
-        to_print.append(headers)
-
-        headers = ["----", "--------------","-------", "----", "----", "------"]
-        header_str = "   ".join(headers)
-        to_print.append(headers)
-
-        trnsctn: Trnsctn
-        for trnsctn in trns_list:
-            date = trnsctn.date # mm/dd/yyyy as str
-            trns_id = trnsctn.trns_id
-            resv_id = trnsctn.resv_id
-            billtyp = trnsctn.billtyp
-            desc = trnsctn.desc
-            amount = trnsctn.amnt
-
-            amt_str = '${:,.2f}'.format(amount)
-            amt_str = "+"+amt_str if billtyp == "CREDIT" else "-"+amt_str
-
-            values = [date,trns_id,resv_id,billtyp,desc,amt_str]
-            to_print.append(values)
-
-        # calculate the character width of every str to be printed out,
-        # and calculate the minimum amount of space needed to fit all strs
-        # in each column
-        elmLens = [list(map(len,item)) for item in to_print]
-        col_wds = list(map(list, zip(*elmLens)))
-        max_c_w = [max(width) for width in col_wds]
-
-        # print out the list of lists, padding each string with the right amount of blank space
-        all_rep = ''
-        for row in to_print:
-            for idx,elem in enumerate(row):
-                all_rep += elem.ljust(max_c_w[idx] + 2)
-            all_rep += "\n"
-
-        print(all_rep)
-
-    def view_reservations(self,custID: str, dt_strt: str, dt_end: str):
-
-        print("\nviewing reservations: reservations by date, customer ID.")
-        
-        # fetch reservations by customer id
-        repo = ObjRepo()
-        rvns_list = repo.get_reservations_by_custID(custID,dt_strt,dt_end)
-
-        # print out results
-        headers = ["resv id","date booked", "date resrvd", "start", "end", "customer id", "equipment id","name", "workshop id", "name", "status"]
-        header_str = "   ".join(headers)
-        to_print = []
-        to_print.append(headers)
-
-        headers = ["-------","-----------", "-----------", "------","---", "-----------", "------------","----", "-----------", "----", "------"]
-        header_str = "   ".join(headers)
-        to_print.append(headers)
-        
-        for rvn in rvns_list:
-            resv_id = rvn.resv_id
-            date_bk = rvn.time_of_creation_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
-            date_rs = rvn.start_datetime.date().strftime('%m/%d/%Y') # mm/dd/yyyy as str
-            custID = rvn.custID
-            if isinstance(rvn.bookable_item,Workshop):
-                eqmntID = "-"
-                eqmntNM = "-"
-                wkshpID = rvn.bookable_item.get_id()
-                wkshpNM = rvn.bookable_item.get_name()
-            elif isinstance(rvn.bookable_item,Equipment):
-                eqmntID = rvn.bookable_item.get_id()
-                eqmntNM = rvn.bookable_item.get_name()
-                wkshpID = "-"
-                wkshpNM = "-"
-            else:
-                raise Exception("fatal error. Reservation did not have a bookable item")
-            canceld = "CANCELED" if rvn.canceld else "ACTIVE"
-
-
-            hr_strt = rvn.start_datetime.hour
-            mm_strt = rvn.start_datetime.minute
-            hr_end = rvn.end_datetime.hour
-            mm_end = rvn.end_datetime.minute
-
-            if hr_strt > 12:
-                hr_strt -= 12
-                st_ampm = " pm"
-            else:
-                st_ampm = " am"            
-
-            if hr_end > 12:
-                hr_end -= 12
-                en_ampm = " pm"
-            else:
-                en_ampm = " am"
-
-            time_st = str(hr_strt)+":"+str(mm_strt).zfill(2)+st_ampm
-            time_en = str(hr_end)+":"+str(mm_end).zfill(2)+en_ampm
-
-            values = [resv_id,date_bk, date_rs,time_st,time_en,custID,eqmntID,eqmntNM,wkshpID,wkshpNM,canceld]
-            to_print.append(values)
-
-        # calculate the character width of every str to be printed out,
-        # and calculate the minimum amount of space needed to fit all strs
-        # in each column
-        elmLens = [list(map(len,item)) for item in to_print]
-        col_wds = list(map(list, zip(*elmLens)))
-        max_c_w = [max(width) for width in col_wds]
-
-        # print out the list of lists, padding each string with the right amount of blank space
-        all_rep = ''
-        for row in to_print:
-            for idx,elem in enumerate(row):
-                all_rep += elem.ljust(max_c_w[idx] + 2)
-            all_rep += "\n"
-
-        print(all_rep)

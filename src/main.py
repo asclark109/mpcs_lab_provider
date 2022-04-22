@@ -1,10 +1,10 @@
 """commandline program for interacting with program"""
 
-# import modules
+# external
 import argparse, datetime
 
-# local imports
-from application import AppInt
+# local 
+from application import Application
 
 def main():
 
@@ -18,7 +18,6 @@ def main():
     parser.add_argument("-transactions", required=False, action='store_true', help="displays transactions for date range, see -dateL and -dateR")
     parser.add_argument("-reservations", required=False, nargs="?",metavar=('CST_ID'),  const="ALL", help="displays reservations for a customer for date range")
     parser.add_argument("-save",  action='store_true', required=False, help="officially saves the changes that would be made from call")
-
     parser.add_argument("-dateL", required=False, help="date, left bound (for bounding report,transactions,reservations)")
     parser.add_argument("-dateR", required=False, help="date, right bound (for bounding report,transactions,reservations)")
 
@@ -26,7 +25,7 @@ def main():
     args = parser.parse_args()
 
     # fire up app
-    app = AppInt()
+    app = Application()
 
     # handle optional flags for dateL, dateR
     if args.dateL:
